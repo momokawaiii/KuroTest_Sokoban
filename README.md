@@ -2,11 +2,15 @@
 
 基于 Unreal Engine 的三维推箱解谜工程，包含五个关卡和符文关卡编辑器。
 
-## 打开工程
+## 下载并打开
 
-1. 在 Windows 安装 Unreal Engine 5.8.4、C++ 编译工具链和 Git LFS。
-2. 克隆仓库，在工程目录运行 `git lfs pull` 获取关卡和其他资产。
-3. 打开 `ResonantRunes.uproject`。首次打开时按提示重建模块。若提示找不到引擎，右击项目文件，选择 **Switch Unreal Engine version** 并关联本机的 UE 5.8。
+1. 在 Windows 通过 Epic Games Launcher 安装 **Unreal Engine 5.8.4**。
+2. 下载并完整解压 [Windows 可编辑工程 ZIP](https://github.com/momokawaiii/KuroTest_Sokoban/releases/download/v1.0.0/ResonantRunes-Win64-UE5.8.4.zip)。
+3. 双击 `ResonantRunes.uproject`。下载包已包含对应的编辑器模块和完整关卡资产。
+
+### 从源码构建
+
+安装 C++ 编译工具链和 Git LFS。用 Git 克隆仓库后，在工程目录运行 `git lfs pull`。首次打开 `.uproject` 时按提示重建模块。
 
 ## 游玩关卡
 
