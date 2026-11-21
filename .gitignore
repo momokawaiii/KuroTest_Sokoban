@@ -1,0 +1,18 @@
+# Unreal build outputs, editor state, caches, and cooked content
+/Binaries/
+/DerivedDataCache/
+/Intermediate/
+/Saved/
+/Build/**/FileOpenOrder/
+
+# Local compiler and IDE files
+/.vs/
+/.vscode/
+/*.code-workspace
+/*.sln
+*.suo
+*.VC.db
+*.VC.opendb
+*.pdb
+__pycache__/
+*.pyc

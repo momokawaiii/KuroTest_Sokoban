@@ -1,0 +1,337 @@
+#ifndef RESONANT_RUNES_HUD_USH
+#define RESONANT_RUNES_HUD_USH
+
+float RuneNoise(float2 p)
+{
+    float2 cell = floor(p);
+    float2 f = frac(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float4 h = frac(sin(dot(cell, float2(127.1, 311.7)) + float4(0, 127.1, 311.7, 438.8)) * 43758.5453);
+    return lerp(lerp(h.x, h.y, f.x), lerp(h.z, h.w, f.x), f.y);
+}
+
+float RuneBand(float distance, float width)
+{
+    return 1.0 - smoothstep(width * .38, width, abs(distance));
+}
+
+float RuneCharge(float position, float progress, float width)
+{
+    return RuneBand(position - lerp(-.18, 1.18, progress), width) * (1.0 - smoothstep(.83, 1.0, progress));
+}
+
+float RunePerimeter(float2 uv, float2 size, float4 edges)
+{
+    float lengthAlongEdge = uv.x * size.x;
+    if (edges.z == min(min(edges.x, edges.y), min(edges.z, edges.w)))
+        lengthAlongEdge = size.x + uv.y * size.y;
+    else if (edges.y == min(min(edges.x, edges.y), min(edges.z, edges.w)))
+        lengthAlongEdge = 2.0 * size.x + size.y - uv.x * size.x;
+    else if (edges.w == min(min(edges.x, edges.y), min(edges.z, edges.w)))
+        lengthAlongEdge = 2.0 * (size.x + size.y) - uv.y * size.y;
+    return lengthAlongEdge / (2.0 * (size.x + size.y));
+}
+
+// The atlas supplies the silhouette. The element effects only light or distort its ink.
+float4 PaintRuneIcon(float2 uv, float4 motion, float4 state, float3 accent,
+    Texture2D icons, SamplerState iconsSampler)
+{
+    float slot = state.y;
+    float t = motion.x;
+    float2 sampleUV = uv;
+    float flow;
+    if (slot < .5)
+    {
+        float phase = uv.x - uv.y;
+        flow = RuneBand(frac(phase * .82 - t * .83) - .5, .26) * (.72 + .28 * sin(t * 24.0));
+    }
+    else if (slot < 1.5)
+    {
+        float coil = uv.y * 3.7 - .42 * sin(uv.x * 4.7) + t * .64;
+        flow = RuneBand(frac(coil) - .5, .34);
+    }
+    else if (slot < 2.5)
+    {
+        float radius = length((uv - float2(.49, .75)) * float2(1.0, 1.52));
+        flow = RuneBand(frac(radius * 2.8 - t * .73) - .5, .31);
+    }
+    else
+    {
+        float face = uv.x * 1.32 + uv.y * .53 + floor(uv.y * 8.0) * .037;
+        flow = RuneBand(frac(face - t * .41) - .5, .28);
+        sampleUV.x += flow * sin(uv.y * 42.0 - t * 5.0) * .008;
+    }
+
+    // Clamp within each 96-pixel tile before traversing the four-column atlas.
+    float2 inner = (saturate(sampleUV) * 94.0 + 1.0) / 96.0;
+    float4 ink = Texture2DSample(icons, iconsSampler, float2((slot + inner.x) * .25, inner.y));
+    float3 original = sqrt(saturate(ink.rgb));
+    float intensity = saturate(max(original.r, original.g) * 1.92);
+    float3 color = slot < .5 ? original : lerp(original, lerp(accent * intensity, 1.0, intensity * .19), .76);
+    float pulse = RuneCharge(.58 * uv.x + .42 * (1.0 - uv.y), motion.w, .23);
+    color += accent * intensity * (flow * .31 + motion.z * .20 + pulse * .53);
+    float monochrome = dot(color, float3(.21, .72, .07));
+    color = lerp(color, monochrome * float3(.82, .86, 1.0), state.z * .81);
+    return float4(color * (1.0 - state.z * .26), ink.a);
+}
+
+float4 PaintRunePanel(float2 uv, float4 geometry, float4 motion, float4 state, float3 accent, bool skill,
+    Texture2D art, SamplerState artSampler)
+{
+    float2 size = geometry.xy;
+    float2 p = uv * size;
+    float left = p.x - geometry.z * (1.0 - uv.y);
+    float right = size.x - geometry.z - left;
+    float4 edges = float4(p.y, size.y - p.y, right, left);
+    float distance = min(min(edges.x, edges.y), min(edges.z, edges.w));
+    float aa = max(fwidth(distance), .5);
+    float inside = smoothstep(-aa, aa, distance);
+    float border = 1.0 - smoothstep(.55, 1.15 + aa, abs(distance));
+    float bevel = 1.0 - smoothstep(1.0, 7.0, distance);
+    float t = motion.x;
+
+    // Bent UVs keep the glass striations and the sweep moving on separate layers.
+    float grain = RuneNoise(uv * float2(14, 7) + float2(-t * .32, t * .08));
+    float drift = sin(uv.x * 21.0 + uv.y * 13.0 + grain * 4.0 - t * 1.35);
+    float2 bent = uv + float2(drift, sin(uv.x * 24.0 - t * 1.7)) * float2(.018, .026);
+    float band = RuneBand(bent.y - bent.x * .58 - .21, .41);
+    float trace = RuneBand(frac(bent.x * 23.0 - t * .55) - .5, .21)
+        * RuneBand(bent.y - .048, .032) * RuneBand(uv.x - .5, .48);
+    float chipped = smoothstep(.05, .27, RuneNoise(p * .13 + float2(0, floor(t * 2.0) * .55)));
+    float revealField = lerp(.19, .81, bent.x) + (grain - .5) * .22 + (uv.y - .5) * .18;
+    float reveal = smoothstep(-.03, .075, state.x - revealField);
+    float dissolve = RuneBand(state.x - revealField, .074);
+
+    float scan = RuneCharge(bent.x - .13 * bent.y + .065, motion.w, .14);
+    float3 base = lerp(float3(.024, .029, .063), float3(.094, .067, .158), band * (.43 + .28 * grain));
+    float3 metal = lerp(accent, float3(.39, .26, .59), smoothstep(.14, .86, uv.x) * .76);
+    float bright = .34 + .37 * sin(uv.x * 3.14 + uv.y * 1.5) + .08 * drift + motion.z * .46;
+    float face = .70;
+    if (!skill && state.y > 6.5)
+    {
+        base = lerp(float3(.028, .035, .075), float3(.073, .049, .132), band * .67);
+        metal = lerp(accent, float3(.52, .31, .73), uv.x * .53);
+        face = .96;
+        bright += .36;
+    }
+    else if (!skill && state.y > 5.5)
+    {
+        float facets = RuneNoise(bent * float2(11, 5)) * RuneNoise(bent * 26.0);
+        base = lerp(float3(.55, .31, .17), float3(1.0, .86, .62), saturate(.43 + band * .40 + facets * .25 + motion.z * .22));
+        metal = float3(1.0, .82, .54);
+        face = .98;
+        bright += .33;
+        scan = max(scan, RuneBand(bent.x - frac(t * .37) * 1.6 + .27, .13) * (.21 + motion.z * .60));
+    }
+    else if (!skill && state.y > 4.5)
+    {
+        base += accent * band * (.09 + motion.z * .14);
+        scan = max(scan, RuneBand(bent.x - frac(t * .37) * 1.6 + .27, .10) * motion.z * .39);
+    }
+    if (!skill && state.y > 1.5 && state.y < 2.5)
+    {
+        float phase = RunePerimeter(uv, size, edges);
+        scan = RuneCharge(phase, motion.w, .14) * (.18 + .82 * saturate(border + bevel * .67));
+        face = .43;
+    }
+
+    float3 rgb = base + metal * (border * bright * (.45 + .55 * chipped) + bevel * band * .105)
+        + accent * (trace * .11 + scan * (.24 + .31 * border) + dissolve * .44);
+    if (skill)
+    {
+        float2 iconUV = (p - float2(49.0, size.y * .5)) / 87.0 + .5;
+        float4 icon = PaintRuneIcon(iconUV, motion, state, accent, art, artSampler);
+        float breathing = .65 + .35 * sin(t * 5.5 + uv.x * 10.0);
+        rgb += accent * (border * motion.z * breathing * .78) * (1.0 - state.z * .50);
+        rgb = lerp(rgb, icon.rgb, icon.a);
+    }
+    return float4(rgb, inside * motion.y * reveal * face);
+}
+
+float4 PaintRuneFrame(float2 uv, float4 geometry, float4 motion, float4 state, float3 accent)
+{
+    float2 size = geometry.xy;
+    float2 extent = float2(size.x - geometry.z, size.y);
+    float2 p = uv * size - float2(geometry.z * (1.0 - uv.y), 0);
+    float2 farEdge = extent - p;
+    float2 local = saturate(p / extent);
+    float cut = .7071 * min(p.x + p.y - 8.0, farEdge.x + farEdge.y - 14.0);
+    float distance = min(cut, min(min(p.x, farEdge.x), min(p.y, farEdge.y)));
+    float aa = max(fwidth(distance), .5);
+    float inside = smoothstep(-aa, aa, distance);
+    float rim = RuneBand(distance, 1.15 + aa);
+    float inset = RuneBand(distance - 4.5, 1.0 + aa * .46);
+    float bevel = 1.0 - smoothstep(1.0, 11.0, distance);
+
+    float t = motion.x;
+    float grain = RuneNoise(p * .22);
+    float silk = RuneNoise(local * float2(12, 4) + float2(-t * .12, .6 + t * .045));
+    float crown = (1.0 - smoothstep(.03, .64, local.x)) * (1.0 - smoothstep(.0, .68, local.y));
+    float foil = RuneBand(local.x * .84 + local.y * .46 - .35 + (silk - .5) * .085, .23);
+    float fold = smoothstep(.67, .99, local.x) * smoothstep(.38, .98, local.y);
+    float foldEdge = fold * RuneBand(local.x + local.y * .46 - 1.28, .038);
+    float3 violet = float3(.51, .31, .82);
+    float3 surface = lerp(float3(.031, .035, .064), float3(.083, .061, .139),
+        saturate(crown * .63 + foil * .35 + fold * .58 + grain * .11));
+    surface += accent * (.049 * crown + .058 * bevel * motion.z);
+
+    // The raised operation tab uses the same frame with a denser sheet of coloured glass.
+    if (state.y > 1.5 && state.y < 2.5)
+        surface += violet * (.12 + .23 * foil) * (1.0 - .58 * local.x);
+
+    float seam = RuneBand(p.y - 6.0, .95 + aa) * (1.0 - smoothstep(.18, .85, local.x));
+    float engraving = RuneBand(frac(p.x / 8.5) - .5, .12) * RuneBand(p.y - 7.0, 3.0) * crown;
+    float sweepAt = lerp(-.24, 1.24, frac(t * .21 + state.y * .157));
+    float sweep = RuneBand(local.x - local.y * .09 - sweepAt, .11);
+    float pulse = RuneCharge(local.x - .10 * local.y + .052, motion.w, .16);
+    float3 metal = lerp(accent, violet, smoothstep(.26, 1.0, local.x) * .74);
+    float corners = max(crown, fold);
+    float3 rgb = surface + metal * (rim * (.53 + .49 * corners + .47 * sweep + .40 * pulse)
+        + inset * (.15 + .29 * corners + .41 * sweep) + bevel * .10);
+    rgb += accent * (seam * (.16 + .37 * sweep) + engraving * .077 + pulse * (foil * .054 + .09 * bevel));
+    rgb += violet * (foldEdge * .18 + fold * sweep * .12);
+
+    float revealField = .07 + local.x * .74 + (silk - .5) * .14;
+    float visible = smoothstep(-.035, .095, state.x - revealField);
+    rgb += accent * RuneBand(state.x - revealField, .065) * .31;
+    return float4(rgb, inside * visible * motion.y * saturate(.88 + .12 * rim));
+}
+
+float4 PaintRuneDial(float2 uv, float4 motion, float4 state, float3 accent)
+{
+    float2 p = uv * 2.0 - 1.0;
+    float r = length(p);
+    float t = motion.x;
+    float a = atan2(p.y, p.x);
+    float phi = a + t * .085;
+    float tick = abs(frac(phi * 14.006 + .5) - .5);
+    float tracks = RuneBand(r - .86, .008) * (.3 + .7 * RuneBand(sin(a * 2.0 + .4), .96));
+    tracks += RuneBand(r - .717, .011) * .95 + RuneBand(r - .585, .006) * .66;
+    tracks += RuneBand(r - .385, .006) * .45;
+    float marks = RuneBand(r - .775 + sin(phi * 14.0) * .011, .030) * RuneBand(tick, .24);
+    marks += RuneBand(r - .785, .017) * RuneBand(abs(frac(phi * 14.006 + .2) - .5), .15);
+    float globe = RuneBand(sin(a * 3.0 + t * .12), .018) * smoothstep(.43, .52, r) * (1.0 - smoothstep(.83, .88, r));
+    float corona = exp(-r * r * 4.8);
+    float sky = RuneBand(p.x, .065) * smoothstep(.08, .4, r) * (1.0 - smoothstep(.55, 1.0, abs(p.y)));
+    float aura = .18 * corona + .19 * sky;
+    float sweep = RuneBand(frac(phi * .15915 + .5) - .5, .18);
+    float ring = tracks * (.36 + .45 * sweep) + marks * .43 + globe * .20;
+    if (state.y > 2.5)
+    {
+        float arc = .21 + .79 * pow(abs(sin(a + .57)), 3.0);
+        ring = (RuneBand(r - .98, .0037) * .29 + RuneBand(r - .88, .003) * .87
+            + RuneBand(r - .82, .002) * .24) * arc;
+        aura = RuneBand(r - .77, .22) * (.06 + .22 * sweep);
+    }
+    else if (state.y > 1.5)
+    {
+        ring = RuneBand(r - .93, .017) * .28 + RuneBand(r - .77, .020) * .42
+            + RuneBand(r - .57, .024) * .76 + RuneBand(r - .38, .030)
+            + RuneBand(r - .20, .036) * .85;
+        ring *= .36 + .47 * RuneBand(sin(a + t * .40), 1.05);
+        aura = .41 * corona + .22 * exp(-dot(p * float2(8.0, 2.0), p * float2(8.0, 2.0)));
+    }
+    else
+    {
+        float2 spark = p - float2(0, state.y > .5 ? -.04 : .31);
+        float diffraction = exp(-dot(spark * float2(27.0, 4.2), spark * float2(27.0, 4.2)));
+        diffraction += .55 * exp(-dot(spark * float2(7.8, 43.0), spark * float2(7.8, 43.0)));
+        aura += diffraction * .33;
+        ring += diffraction * .18;
+    }
+    return float4(lerp(accent * .53, float3(1.0, .87, .62), saturate(ring)), saturate(ring + aura) * motion.y);
+}
+
+float4 PaintRuneGlass(float2 uv, float4 vertex, float4 motion, float4 state, float3 accent,
+    Texture2D art, SamplerState artSampler)
+{
+    float t = motion.x;
+    float3 bary = float3(uv, 1.0 - uv.x - uv.y);
+    float edge = min(bary.x, min(bary.y, bary.z));
+    float edgePixel = edge / max(fwidth(edge), .001);
+    float rim = 1.0 - smoothstep(.10, 2.0, edgePixel);
+    float inner = 1.0 - smoothstep(.022, .18, edge);
+    float facets = RuneNoise(uv * 16.0 + float2(t * .14, -t * .21));
+    float warp = (facets - .5) * inner * (.014 + (1.0 - state.x) * .030);
+    float2 artUV = saturate(vertex.rg + float2(warp, -.35 * warp));
+    float3 marble = Texture2DSample(art, artSampler, artUV).rgb;
+    float3 refracted = float3(Texture2DSample(art, artSampler, saturate(artUV + warp * 0.6)).r,
+        marble.g, Texture2DSample(art, artSampler, saturate(artUV - warp * .45)).b);
+    float bevel = RuneBand(uv.x + uv.y * .47 - .396 + (facets - .5) * .072, .34);
+    float glint = RuneBand(frac(uv.x + uv.y * .51 - t * .14) - .5, .19) * (.29 + .29 * sin(t * 2.3));
+    float3 glass = lerp(float3(.092, .041, .227), accent * .64,
+        saturate(bevel * .49 + glint * .33) * (1.0 - state.z * .38));
+    float3 rgb = glass * (.51 + .49 * inner) + sqrt(saturate(refracted)) * vertex.b * (.53 + bevel * .34);
+    rgb += lerp(float3(.45, .27, .77), accent, smoothstep(.1, .7, bevel)) * rim * (.43 + .63 * glint);
+    float density = .43 + .34 * vertex.b + .22 * rim;
+    if (state.y > .5)
+    {
+        // Local UVs keep the sweep attached to each moving shard. The cycle wraps beyond the tips.
+        float travel = lerp(-.28, 1.28, frac(t * .35 + vertex.b * 6.41));
+        float distance = dot(uv, float2(.84, 1.0)) - travel + (facets - .5) * .036;
+        float halo = RuneBand(distance, .17);
+        float core = RuneBand(distance, .031);
+        float3 sheen = lerp(float3(.52, .25, 1.0), float3(1.0, .80, .50), saturate(bevel * .81 + rim * .37));
+        rgb += sheen * (halo * (.17 + facets * .24) + core * (.27 + rim * .63));
+        density = saturate(density + halo * .30 + core * .14);
+    }
+    float revealed = smoothstep(-.07, .065, state.x - .57 * uv.x - .21 * uv.y - .20 * facets);
+    return float4(rgb, motion.y * vertex.a * revealed * density);
+}
+
+float4 PaintRuneHeading(float2 uv, float4 motion, float4 state, float3 accent,
+    Texture2D titles, SamplerState titlesSampler)
+{
+    float2 atlas = float2(uv.x, (uv.y + state.y) * .5);
+    float ink = Texture2DSample(titles, titlesSampler, atlas).r;
+    float halo = Texture2DSample(titles, titlesSampler, atlas + float2(.006, 0)).r
+        + Texture2DSample(titles, titlesSampler, atlas - float2(.006, 0)).r
+        + Texture2DSample(titles, titlesSampler, atlas + float2(0, .006)).r
+        + Texture2DSample(titles, titlesSampler, atlas - float2(0, .006)).r;
+    float progression = .075 + uv.x * .67 + uv.y * .16 + (RuneNoise(uv * float2(38, 24)) - .5) * .09;
+    float reveal = smoothstep(-.055, .065, state.x - progression);
+    float light = RuneBand(state.x - progression - .029, .106);
+    float polish = RuneBand(uv.y - uv.x * .25 - .25, .36);
+    float3 gold = lerp(accent * .70, float3(1.0, .96, .79), saturate(.27 + polish * .57 + light * .7));
+    return float4(gold, saturate(ink + halo * (.035 + light * .072)) * reveal * motion.y);
+}
+
+// Geometry is width, height, skew and mode. Motion is time, opacity, focus and pulse phase.
+// State is reveal, variant and lock. These values are local to each HUD element.
+float4 PaintRuneHUD(float2 uv, float4 vertex, float4 geometry, float4 motion, float4 state, float3 accent,
+    Texture2D art, SamplerState artSampler, Texture2D titles, SamplerState titlesSampler)
+{
+    [branch] if (geometry.w < 1.5)
+        return PaintRunePanel(uv, geometry, motion, state, accent, geometry.w > .5, art, artSampler);
+    [branch] if (geometry.w < 2.5)
+        return PaintRuneDial(uv, motion, state, accent);
+    [branch] if (geometry.w < 3.5)
+        return PaintRuneGlass(uv, vertex, motion, state, accent, art, artSampler);
+    [branch] if (geometry.w < 4.5)
+    {
+        float2 p = uv * 2.0 - 1.0;
+        float vignette = smoothstep(.14, 1.18, length(p * float2(.85, .68)));
+        float2 focus = (p + float2(0, .23)) * float2(1.63, 1.38);
+        float board = 1.0 - smoothstep(.35, 1.10, length(focus));
+        float ribbonY = .97 - .63 * smoothstep(.36, 1.16, uv.x);
+        float ribbonU = smoothstep(.40, .90, uv.x);
+        float ripple = RuneNoise(uv * float2(11, 15) + float2(-motion.x * .10, motion.x * .035));
+        float arc = uv.y - ribbonY + .020 * (ripple - .5);
+        float ribbon = (RuneBand(arc, .075) * .17 + RuneBand(arc + .014, .012) * .31) * ribbonU;
+        float glow = RuneBand(p.x, .19) * (1.0 - smoothstep(-.92, -.28, p.y));
+        float settle = state.y;
+        float alpha = lerp(.56 + vignette * .34 - .54 * board, .71 + vignette * .18, settle);
+        float3 blue = lerp(float3(.032, .048, .087), float3(.015, .020, .042), vignette);
+        blue += float3(.20, .11, .42) * ripple * ribbon * lerp(1.0, .54, settle);
+        blue += float3(.124, .072, .065) * (.17 * glow);
+        return float4(blue, alpha * motion.y);
+    }
+    [branch] if (geometry.w < 5.5)
+        return PaintRuneHeading(uv, motion, state, accent, titles, titlesSampler);
+    [branch] if (geometry.w > 6.5)
+        return PaintRuneFrame(uv, geometry, motion, state, accent);
+    float4 icon = PaintRuneIcon(uv, motion, state, accent, art, artSampler);
+    return float4(icon.rgb, icon.a * motion.y);
+}
+
+#endif

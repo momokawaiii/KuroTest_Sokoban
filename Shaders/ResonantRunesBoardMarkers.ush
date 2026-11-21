@@ -1,0 +1,37 @@
+#pragma once
+
+float3 PaintBoardMarker(float2 UV, float4 Style, float Seconds)
+{
+    float2 Cell = UV * 2.0 - 1.0;
+    float2 Side = abs(Cell);
+    float Border = max(Side.x, Side.y);
+    float EdgeAA = clamp(fwidth(Border), 0.002, 0.065);
+
+    if (Style.a < 0.75)
+    {
+        float Distance = abs(Border - 0.86);
+        float Line = 1.0 - smoothstep(0.008, 0.018 + EdgeAA, Distance);
+        float Halo = 1.0 - smoothstep(0.015, 0.062, Distance);
+        float CornerStart = Style.a > 0.25 ? 0.18 : 0.36;
+        float Corner = smoothstep(CornerStart, CornerStart + 0.085, min(Side.x, Side.y));
+        return Style.rgb * Corner * (Line * 1.1 + Halo * 0.2);
+    }
+
+    // Project to the nearest edge to keep the travel speed even at the corners.
+    float2 Square = Cell / max(Border, 0.001);
+    float Path;
+    if (Side.y >= Side.x)
+        Path = Cell.y < 0.0 ? (Square.x + 1.0) * 0.125 : 0.5 + (1.0 - Square.x) * 0.125;
+    else
+        Path = Cell.x > 0.0 ? 0.25 + (Square.y + 1.0) * 0.125 : 0.75 + (1.0 - Square.y) * 0.125;
+
+    float Age = frac(Seconds * 0.54 - Path);
+    float Head = 1.0 - smoothstep(0.004, 0.043, min(Age, 1.0 - Age));
+    float Tail = pow(saturate(1.0 - Age * 3.2), 1.55);
+    float Distance = abs(Border - 0.79);
+    float Line = 1.0 - smoothstep(0.008, 0.019 + EdgeAA, Distance);
+    float Halo = 1.0 - smoothstep(0.016, 0.103, Distance);
+    float3 Tint = Style.rgb;
+    return Tint * Halo * (0.09 + 0.62 * Tail + 0.54 * Head)
+        + Line * (Tint * (0.29 + 2.3 * Tail) + (Tint + 0.46) * Head * 1.45);
+}
